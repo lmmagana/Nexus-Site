@@ -1,0 +1,83 @@
+import { services } from 'wix-bookings.v2'; // Bookings SDK
+import { sessions } from 'wix-bookings-backend'; // Bookings SDK (USE AS AN ALTERNATIVE)
+
+const privateLessonsId = '8de81deb-84aa-4eda-8a36-fa70c36e8394';
+
+export async function getServicesForToday() {
+    const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    
+    const now = new Date();
+    const localNow = new Date(now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
+    const today = weekdays[localNow.getDay()];
+
+    const {items} = await services.queryServices().eq('hidden', false).eq('onlineBooking.enabled', true).find();
+
+    /* Filter on the tagLine text (case-insensitive)*/
+    const filtered = items.filter(item => {
+        const tl = String(item.tagLine ?? '');
+        return tl.includes(today);
+    });
+
+    try {
+        let {items: introlesson} = await services.queryServices().eq("name", "Intro Lesson").find();
+        //console.log(`${introlesson[0].name} - ${introlesson[0]._id}`);
+        let introLesson = await services.getService(introlesson[0]._id);
+
+        let {items: privatelesson} = await services.queryServices().eq("name", "Private Lesson").find();
+        //console.log(`${privatelesson[0].name} - ${privatelesson[0]._id}`);
+        let privateLesson = await services.getService(privatelesson[0]._id);
+        filtered.push(introLesson, privateLesson);
+
+    } catch (error){
+        console.log("Couldn't push private lessons");
+    }
+
+    //Shapes each plan into {service name, serviceID} for dropdown menu
+    return filtered.map(item => ({
+        //label: `${item.tagLine} - ${item.name}`,
+        label: `${item.name}`,
+        value: item._id
+        //value: item.name
+    }));
+}
+
+/*
+ * Uses querySessions() from 'wix-bookings-backend'
+ * @param n/a
+ * @returns plan
+ */
+export async function getSessions() {
+    try {
+        const now = new Date();
+        const localNow = new Date(now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
+
+        const startOfDay = new Date(Date.UTC(
+            localNow.getUTCFullYear(),
+            localNow.getUTCMonth(),
+            localNow.getUTCDate() // → 00:00:00.000 UTC today
+        ));
+        const endOfDay = new Date(startOfDay);
+        endOfDay.setUTCDate(endOfDay.getUTCDate() + 1);
+
+        const { items: todaySessions } = await sessions.querySessions()
+            .ge("end.timestamp", endOfDay)
+            .lt("start.timestamp", startOfDay)
+            .find({ suppressAuth: true });
+
+        console.log("Retrieved sessions:", todaySessions);
+
+        return await Promise.all(
+            todaySessions.map(async (item) => {
+                const nexusClass = await services.getService(item.scheduleOwnerId);
+
+                return {
+                    label: `${nexusClass.tagLine} - ${nexusClass.name}`,
+                    value: item._id
+                };
+            })
+        );
+    } catch (error) {
+        console.error(error);
+        return 0;
+    }
+}

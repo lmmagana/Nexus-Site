@@ -1,0 +1,144 @@
+import { orders, checkout } from 'wix-pricing-plans-backend'; // for listing orders and checking pricing plans
+import { plans } from 'wix-pricing-plans.v2'; // Pricing Plans SDK
+import { contacts } from 'wix-crm.v2';
+import { elevate } from "wix-auth";
+import { PLAN_LOOKUP } from 'backend/constants.js'
+import { privatesExtendedField, sessionsExtendedField, plansToAdd } from 'backend/constants.js'
+import { myGetEvent, myGetMem, myGetPlan, myGetService, myGetTicket, myGetPlanPrice, myGetTicketPrice } from 'backend/helpers.js'
+
+export async function paymentTypes(num) {
+    if (num === 0) {
+        return [
+            { label: "Venmo", value: "Venmo" },
+            { label: "Card", value: "Card" },
+            { label: "Cash", value: "Cash" },
+            { label: "Booked Online", value: "Booked Online" },
+            { label: "Physical Punch Card", value: "Physical Punch Card" },
+            { label: "Other", value: "Other" },
+        ];
+    } else {
+        return [
+            { label: "N/A", value: "N/A" },
+        ];
+    }
+}
+
+export async function addPlan(contactId, planId) {
+    if (!plansToAdd.has(planId)) {
+        //console.log(`Did not add ${planId} for ${await myGetMem(contactId)}`)
+        return null; // nothing to do
+    }
+
+    try {
+        const options = { paid: true, suppressAuth: true }
+        checkout.createOfflineOrder(planId, contactId, options);
+        console.log(`${await myGetPlan(planId)} successfully added to ${await myGetMem(contactId)}'s account`);
+
+    } catch (error) {
+        console.error("Error Purchasing Plan:", error);
+    }
+}
+
+/*
+ * Uses listOrders() from 'wix-pricing-plans-backend'
+ * @param {string} memberId
+ * @returns {{planName: string, planId: string} | 0}
+ */
+export async function checkActivePlan(memberId) {
+    const filters = {
+        buyerIds: [`${memberId}`],
+        orderStatuses: ["ACTIVE"]
+    };
+
+    try {
+        const memOrders = await orders.listOrders(filters, null, null, { suppressAuth: true });
+        const memOrdersNoIntro = memOrders.filter(o => !/^\s*Intro Offer\s*$/i.test(o.planName));
+
+        const options = [];
+
+        if (!memOrdersNoIntro.length) return 0;
+
+        for (const order of memOrdersNoIntro) {
+            // keep your log (optional)
+            console.log(`${await myGetMem(memberId)}: ${order.planName} valid`);
+
+            // push each plan as a dropdown option
+            options.push({ label: order.planName, value: order.planId });
+        }
+        //options.push({ label: 'Booked Online', value: 'Booked Online' });
+        return options;
+
+    } catch (error) {
+        console.error("Failed to check for active plan");
+    }
+}
+
+export async function getSessionsRemaining(contactId) {
+    const elevatedGetContact = elevate(contacts.getContact);
+    const contact = await elevatedGetContact(contactId);
+    try {
+        return contact.info.extendedFields.items[sessionsExtendedField];
+    } catch (error) {
+        console.error(`Failed to get ${contact.info.name.first} ${contact.info.name.last}'s Sessions Remaining`, error)
+    }
+}
+
+export async function getPrivatesRemaining(contactId) {
+    const elevatedGetContact = elevate(contacts.getContact);
+    const contact = await elevatedGetContact(contactId);
+    try {
+        return contact.info.extendedFields.items[privatesExtendedField];
+    } catch (error) {
+        console.error(`Failed to get ${contact.info.name.first} ${contact.info.name.last}'s Privates Remaining`, error)
+    }
+}
+
+/**
+ * Returns [{label, value}] where label = "Plan Name – $Price"
+ * and value  = plan ID, ready for a <Dropdown>.
+ */
+export async function getPlansForDropdown() {
+    const { items } = await plans.queryPublicPlans().find(); // → { items } array
+
+    const sorted = items.sort((a, b) => { // orders pricing plans ascending by dollar value
+        const priceA = parseFloat(a.pricing.price.value);
+        const priceB = parseFloat(b.pricing.price.value);
+        return priceA - priceB;
+    });
+
+    const filtered = sorted.filter(p => {
+        const name = p.name.toLowerCase();
+
+        return !(
+            name.includes("membership") ||
+            name.includes("drop-in") ||
+            name === "private lesson"
+        );
+    });
+
+    const cleanOutput = filtered.map(p => ({
+        name: p.name,
+        price: `$${p.pricing.price.value}`,
+        slug: p.slug
+    }));
+    //console.table(cleanOutput);
+
+    const finalPlans = filtered
+        .map(p => ({ label: `${p.name} – $${p.pricing.price.value}*`, value: p._id }))
+        .concat({ label: 'Punch Card 5-Pack – $90 (Physical)', value: '(Physical) Punch Card 5 Pack' }, 
+                { label: 'Punch Card 10-Pack – $149 (Physical)', value: '(Physical) Punch Card 10 Pack' }, 
+                { label: 'Class Drop In - $20', value: 'Class Drop In' }, 
+                { label: 'Day Pass - $30', value: 'Day Pass' }, 
+                { label: 'Intro Lesson - $35', value: 'Intro Lesson' }, 
+                { label: 'Private Lesson - $125', value: 'Private Lesson' }, 
+                { label: 'Other', value: 'Other' })
+        .sort((a, b) => {
+            if (a.value === 'Other') return 1;
+            if (b.value === 'Other') return -1;
+            return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
+        });
+
+    //console.log("Dropdown Plans:", finalPlans);
+
+    return finalPlans;
+}

@@ -1,0 +1,150 @@
+import { availabilityCalendar, bookings, services } from 'wix-bookings.v2';
+import { elevate } from "wix-auth";
+import { members } from "wix-members.v2";
+import { webMethod, Permissions } from "wix-web-module";
+import { bookings as bookings2 } from 'wix-bookings-backend';
+
+/**
+ * THIS FUNCTION WAS GENERATED USING CHATGPT 5
+ * Utility: compute start/end of "today" in the site's timezone and return UTC Dates.
+ * Works without external libs using Intl.DateTimeFormat trick.
+ */
+function getZonedDayBoundsUtc(baseDate, timeZone) {
+  // 1) Get Y-M-D *in that timezone*
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(baseDate);
+
+  const y = +parts.find(p => p.type === 'year').value;
+  const m = +parts.find(p => p.type === 'month').value;
+  const d = +parts.find(p => p.type === 'day').value;
+
+  // 2) Convert "YYYY-MM-DD 00:00 in TZ" to a UTC instante
+  const toUtcFromZoned = (year, month, day, hour = 0, minute = 0, second = 0, ms = 0) => {
+    // Start with the wall-clock time as UTC...
+    const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, second, ms));
+    // ...then adjust by the offset of that same instant shown in the target TZ.
+    const asZoned = new Date(utcGuess.toLocaleString('en-US', { timeZone }));
+    const diff = utcGuess.getTime() - asZoned.getTime();
+    return new Date(utcGuess.getTime() + diff);
+  };
+
+  const startUtc = toUtcFromZoned(y, m, d, 0, 0, 0, 0);
+  // end = tomorrow 00:00 in the same TZ
+  const endUtc = toUtcFromZoned(y, m, d + 1, 0, 0, 0, 0);
+
+  return { startUtc, endUtc };
+}
+
+/**
+ *  Returns true if the member is already on the roster for the given session.
+ */
+const elevatedQueryBookings = elevate(bookings2.queryBookings);
+const isAlreadyBooked = webMethod(Permissions.Anyone, async (contactId, sessionId) => {
+    try {
+        const { items } = await elevatedQueryBookings() // build the query
+            .eq('contactId', contactId) // same customer
+            .eq('sessionId', sessionId) // same class instance
+            .eq('status', "CONFIRMED")
+            .find(); // run it
+
+        return items.length > 0;
+    } catch (error) {
+        console.error(`Error identifying if contact is alredy booked`, error);
+    }
+}, );
+
+/**
+ * Gets Member with elevated permissions
+ * @param {string} memberId
+ * @return { Promise<Member> } member
+ */
+const elevatedgetMember = elevate(members.getMember);
+const myGetMem = webMethod(Permissions.Anyone, async (_id) => {
+    try {
+        const member = await elevatedgetMember(_id, { fieldsets: ['FULL'] });
+        //console.log(`Member: ${JSON.stringify(member, null, 2)}`);
+        return member;
+    } catch (error) {
+        console.error("Could not get member", error);
+    }
+}, );
+
+/**
+ * Adds ONE contact to the first available slot of a service on a given date.
+ * @param {string} memberId   – _Contacts → contact._id_
+ * @param {string} serviceId   – _Bookings → service._id_
+ */
+export async function addParticipant(memberId, serviceId, timezone) {
+    let slot = '';
+    try {
+        // --- 1) Figure out "today" in the site's timezone ---
+        const now1 = new Date();
+        const { startUtc, endUtc } = getZonedDayBoundsUtc(now1, timezone);
+
+        const now = new Date();
+        const startOfDay = new Date(now); startOfDay.setHours(0,0,0,0);
+        const endRange = new Date(startOfDay); endRange.setDate(startOfDay.getDate() + 1);
+
+        let service = await services.getService(serviceId);
+        if(service.type == "APPOINTMENT") return;
+
+        const query = {
+            filter: {
+                serviceId: `${serviceId}`,
+                startDate: startUtc.toISOString(),
+                endDate: endUtc.toISOString(),
+            },
+        };
+
+        const options = { slotsPerDay: 3 };
+
+        const { availabilityEntries } = await availabilityCalendar.queryAvailability(query, options);
+        if (!availabilityEntries.length) { throw new Error('No bookable slots left for that day.'); }
+
+        slot = availabilityEntries[0].slot.sessionId; // we’ll book this session
+        if (!slot) { throw new Error("Unable to query Availability"); }
+    } catch (error) {
+        console.error("Could not find session to book",error);
+        return;
+    }
+
+    if (slot !== '' && await isAlreadyBooked(memberId, slot)) {
+        console.log('This member is already booked for that class.');
+        return;
+    }
+
+    try {
+        let mem = await myGetMem(memberId)
+        const createdBooking = {
+            totalParticipants: 1,
+            contactDetails: {
+                contactId: mem.contactId,
+                firstName: mem.contact.firstName,
+                lastName: mem.contact.lastName,
+                email: mem.contact.emails[0],
+            },
+            bookedEntity: {
+                slot: {
+                    sessionId: slot
+                }
+            },
+            paymentStatus: "PAID",
+            status: "CONFIRMED",
+        }
+
+        const elevatedCreateBooking = elevate(bookings.createBooking);
+        const elevatedConfirmOrDeclineBooking = elevate(bookings.confirmOrDeclineBooking);
+
+        const { booking } = await elevatedCreateBooking(createdBooking, {flowControlSettings: {skipAvailabilityValidation: true}});
+        const result = await elevatedConfirmOrDeclineBooking(booking._id, {paymentStatus: "PAID"});
+
+        //console.log(`Created Booking: ${JSON.stringify(booking, null, 2)}`);
+        console.log(`Created Booking:${booking.contactDetails.firstName} ${booking.contactDetails.lastName} - ${booking.bookedEntity.title} [${booking.status}]`)
+    } catch (error) {
+        console.error(error);
+        throw new Error("Unable to create booking");
+    }
+    return;
+}
