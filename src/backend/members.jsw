@@ -36,6 +36,7 @@ export async function addPlan(contactId, planId) {
 
     } catch (error) {
         console.error("Error Purchasing Plan:", error);
+        throw error;
     }
 }
 
