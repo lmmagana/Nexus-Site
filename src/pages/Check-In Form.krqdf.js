@@ -19,8 +19,7 @@ $w.onReady(async () => {
     // populate Bookings dropdown
     $w('#classDropdown1').options = await getServicesForToday();
     $w('#classDropdown2').options = await getServicesForToday();
-    $w('#classDropdown3').options = await getServicesForToday();
-    //$w('#classDropdown3').options = await queryEvents();
+    $w('#classDropdown3').options = await queryEvents();
 
     // populate plans & paymentMethods dropdown
     $w('#purchase').options = await getPlansForDropdown();
@@ -33,7 +32,7 @@ $w.onReady(async () => {
 
 $w('#contactDropdown').onChange(async (event) => {
     let memberId = $w('#contactDropdown').value;
-    let eventId = null; //let eventId = $w('#classDropdown3').value;
+    let eventId = $w('#classDropdown3').value;
     if (!memberId) return;
 
     try {
@@ -83,16 +82,16 @@ $w('#contactDropdown').onChange(async (event) => {
     }
 });
 
-// $w('#classDropdown3').onChange(async (event) => {
-//     const eventId = $w('#classDropdown3').value;
-//     if (!eventId) {
-//         $w('#purchase').options = await getPlansForDropdown();
-//         $w('#paymentType').options = await paymentTypes(0);
-//     } else {
-//         $w('#purchase').options = await queryTickets(eventId);
-//         $w('#paymentType').options = await paymentTypes(0);
-//     }
-// })
+$w('#classDropdown3').onChange(async (event) => {
+    const eventId = $w('#classDropdown3').value;
+    if (!eventId) {
+        $w('#purchase').options = await getPlansForDropdown();
+        $w('#paymentType').options = await paymentTypes(0);
+    } else {
+        $w('#purchase').options = await queryTickets(eventId);
+        $w('#paymentType').options = await paymentTypes(0);
+    }
+})
 
 $w('#submit').onClick(async (event) => {
     // Collect required values
@@ -105,7 +104,7 @@ $w('#submit').onClick(async (event) => {
     // Optional values
     const class1 = $w("#classDropdown1").value;
     const class2 = $w("#classDropdown2").value;
-    const class3 = $w("#classDropdown3").value;
+    const event = $w("#classDropdown3").value;
     const notes = $w("#notes").value;
 
     // Build missing fields list
@@ -138,7 +137,7 @@ $w('#submit').onClick(async (event) => {
             let timezone = wixSiteFrontend.timezone;
             if (class1) addParticipant(contact, class1, timezone);
             if (class2) addParticipant(contact, class2, timezone);
-            if (class3) addParticipant(contact, class3, timezone); //if (class3) bookEvent(class3, contact, purchase);
+            if (class3) bookEvent(class3, contact, purchase);
 
         } catch (error) {
             console.log("Booking Error", error);
