@@ -1,4 +1,4 @@
-import { members } from 'wix-members.v2'; // Membership SDK
+import { members, authentication } from 'wix-members.v2'; // Membership SDK
 import { contacts } from 'wix-crm-backend';
 import { webMethod, Permissions } from "wix-web-module";
 import { elevate } from "wix-auth";
@@ -17,6 +17,7 @@ export const createNewMember = webMethod(Permissions.Anyone, async (memFirst, me
     const upperLast = toTitleCase(memLast)
 
     const existingMem = await elevatedQueryMember().eq("loginEmail", memEmail).find();
+    const elevatedSendSetPasswordEmail = elevate(authentication.sendSetPasswordEmail);
 
     try {
         if (existingMem.totalCount > 0) { // Member exists, get memId
@@ -54,7 +55,7 @@ export const createNewMember = webMethod(Permissions.Anyone, async (memFirst, me
                 }
             });
             console.log(`New Member ${upperFirst} ${upperLast} created!`);
-            //Send password email
+            await elevatedSendSetPasswordEmail(memEmail); //Send password email
             return newMem.contactId;
         }
     } catch (error) {
