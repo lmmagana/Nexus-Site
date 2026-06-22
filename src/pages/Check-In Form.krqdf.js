@@ -125,7 +125,7 @@ $w('#submit').onClick(async (event) => {
 
     } else if (!skipNotesKeywords) {
         try { //Add Plan
-            if (isWixPlanId(purchase)) addPlan(contact, purchase); // Adjust to be able to add 2 plans
+            if (isWixPlanId(purchase)) await addPlan(contact, purchase); // Adjust to be able to add 2 plans
         } catch (error) {
             console.log("Adding Plan Error", error);
             $w("#confirmationText").text = error?.message || error?.toString() || String(error);
@@ -135,9 +135,9 @@ $w('#submit').onClick(async (event) => {
 
         try { //Book Participant
             let timezone = wixSiteFrontend.timezone;
-            if (class1) addParticipant(contact, class1, timezone);
-            if (class2) addParticipant(contact, class2, timezone);
-            if (class3) bookEvent(class3, contact, purchase);
+            if (class1) await addParticipant(contact, class1, timezone);
+            if (class2) await addParticipant(contact, class2, timezone);
+            if (class3) await bookEvent(class3, contact, purchase);
 
         } catch (error) {
             console.log("Booking Error", error);
